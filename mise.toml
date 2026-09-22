@@ -1,0 +1,25 @@
+[tools]
+rust = "1.97.1"
+
+[tasks.check]
+description = "Type-check all targets and features"
+run = "cargo check --all-targets --all-features"
+
+[tasks.test]
+description = "Run the test suite"
+run = "cargo test --all-features"
+
+[tasks.fmt]
+description = "Format Rust sources"
+run = "cargo fmt --all"
+
+[tasks.fmt-check]
+description = "Check Rust source formatting"
+run = "cargo fmt --all --check"
+
+[tasks.lint]
+description = "Run Clippy with warnings denied"
+run = "cargo clippy --all-targets --all-features -- -D warnings"
+
+[hooks]
+postinstall = "hk install --mise"

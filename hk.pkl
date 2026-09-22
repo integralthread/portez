@@ -1,0 +1,17 @@
+amends "package://github.com/jdx/hk/releases/download/v1.58.1/hk@1.58.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.58.1/hk@1.58.1#/Builtins.pkl"
+
+local fmt = new Mapping<String, Step> {
+  ["cargo-fmt"] = Builtins.cargo_fmt
+}
+
+local lint = new Mapping<String, Step> {
+  ["cargo-clippy"] = Builtins.cargo_clippy
+}
+
+hooks {
+  ["pre-commit"] { fix = true; stash = "git"; steps = fmt }
+  ["pre-push"]   { steps = (fmt) { ...lint } }
+  ["fix"]        { fix = true; steps = fmt }
+  ["check"]      { steps = (fmt) { ...lint } }
+}

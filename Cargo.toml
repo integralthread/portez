@@ -1,0 +1,40 @@
+[package]
+name = "portez"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+description = "Static development port assignment backed by a TOML registry"
+license = "MIT"
+publish = false
+readme = "README.md"
+repository = "https://github.com/integralthread/portez"
+homepage = "https://github.com/integralthread/portez"
+keywords = ["cli", "ports", "development-tools"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "portez"
+path = "src/lib.rs"
+
+[[bin]]
+name = "portez"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml_edit = "0.23"
+usage = { package = "usage-rs", version = "=6.11.0", features = ["completions"] }
+
+[dev-dependencies]
+tempfile = "3"
+usage = { package = "usage-rs", version = "=6.11.0", features = ["completions", "test"] }
+usage-parser = { package = "usage-lib", version = "=6.11.0" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
