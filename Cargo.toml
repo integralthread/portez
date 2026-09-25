@@ -1,6 +1,6 @@
 [package]
 name = "portez"
-version = "0.1.0"
+version = "2026.9.0"
 edition = "2024"
 rust-version = "1.91"
 description = "Static development port assignment backed by a TOML registry"

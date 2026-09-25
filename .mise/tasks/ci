@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="CI: on a release tag, verify, then cross-compile and publish every platform (see publish)"
+#USAGE flag "--profile <profile>" env="ARTIFACTS_PROFILE" help="AWS profile with write access to the artifacts bucket"
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+
+# Releases are cut by `chrono release`, which tags the commit it versions.
+# Only publish that commit: HEAD must carry exactly one release tag, and it
+# must name the version in Cargo.toml. CI checkouts must fetch tags.
+release=$(chrono check --at-tag --quiet)
+echo "releasing ${release} ($(git rev-parse --short HEAD))"
+
+# publish refuses a dirty tree, so check without rewriting anything.
+mise run fmt-check
+mise run lint
+mise run test
+
+# publish builds the release (mise run release) unless this version is
+# already uploaded, and only moves latest/<platform>.json forward.
+mise run publish --profile "${usage_profile:?pass --profile or set ARTIFACTS_PROFILE}"

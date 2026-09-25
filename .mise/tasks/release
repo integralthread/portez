@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="Cross-compile release binaries into target/dist/<package>-<version>-<platform>.tar.gz"
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source .mise/lib/release.sh
+
+# rust comes from mise (rustup); zig and cargo-zigbuild link every target,
+# including Linux musl from macOS, without a platform SDK or Docker.
+rustup target add "${release_targets[@]}" >/dev/null 2>&1
+
+rm -rf "$dist_dir"
+mkdir -p "$dist_dir"
+for target in "${release_targets[@]}"; do
+  cargo zigbuild --locked --release --target "$target" --bin "$pkg_bin"
+  tarball=$(tarball_for "$(platform_for "$target")")
+  # COPYFILE_DISABLE keeps macOS tar from adding ._ metadata files.
+  COPYFILE_DISABLE=1 tar -czf "$tarball" \
+    -C "target/${target}/release" "$pkg_bin" -C "$PWD" LICENSE README.md
+done
+
+echo
+for tarball in "$dist_dir"/*.tar.gz; do
+  printf '%s  %s  %s\n' "$(shasum -a 256 "$tarball" | cut -d' ' -f1)" \
+    "$(du -h "$tarball" | cut -f1)" "$tarball"
+done

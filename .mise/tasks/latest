@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Print the latest published release pointer for a platform (default: this host)"
+#USAGE arg "[platform]" help="e.g. darwin-aarch64, linux-x86_64-musl"
+#USAGE flag "--profile <profile>" env="ARTIFACTS_PROFILE" help="AWS profile with read access to the artifacts bucket"
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source .mise/lib/release.sh
+
+bucket="${ARTIFACTS_BUCKET:?ARTIFACTS_BUCKET is not set}"
+profile="${usage_profile:?pass --profile or set ARTIFACTS_PROFILE}"
+platform="${usage_platform:-$(host_platform)}"
+
+key="pkgs/${pkg_name}/latest/${platform}.json"
+if ! pointer=$(command aws --profile "$profile" s3 cp "s3://${bucket}/${key}" - 2>&1); then
+  case "$pointer" in
+    *"(404)"*) echo "no release published for ${platform} (s3://${bucket}/${key})" >&2 ;;
+    *) echo "$pointer" >&2 ;;
+  esac
+  exit 1
+fi
+jq . <<<"$pointer"

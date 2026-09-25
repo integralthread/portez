@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#MISE description="Build and upload every platform to s3://$ARTIFACTS_BUCKET/pkgs/<package>/ and update latest/<platform>.json"
+#USAGE flag "--profile <profile>" env="ARTIFACTS_PROFILE" help="AWS profile with write access to the artifacts bucket"
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source .mise/lib/release.sh
+
+bucket="${ARTIFACTS_BUCKET:?ARTIFACTS_BUCKET is not set}"
+profile="${usage_profile:?pass --profile or set ARTIFACTS_PROFILE}"
+prefix="pkgs/${pkg_name}"
+
+# Only publish what is committed, so every artifact maps to a git revision.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "working tree is dirty; commit before publishing" >&2
+  exit 1
+fi
+revision=$(git rev-parse HEAD)
+
+# Release order is ChronoStamp order; chrono must be installed.
+if ! command -v chrono >/dev/null; then
+  echo "chrono is required to publish; install it with:" \
+    "cargo install --path ../chrono_stamp" >&2
+  exit 1
+fi
+chrono check --quiet >/dev/null
+
+aws() { command aws --profile "$profile" "$@"; }
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# Check credentials and every latest pointer before spending time on a build.
+if ! identity=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null); then
+  echo "no valid AWS session for profile ${profile}; run: aws sso login --profile ${profile}" >&2
+  exit 1
+fi
+
+# latest/<platform>.json only moves forward, and its ETag guards the final
+# write so a concurrent publish cannot be silently overwritten. A pointer
+# already at this version is left alone, so a partly failed publish can be
+# re-run.
+platforms=()
+for target in "${release_targets[@]}"; do
+  platform=$(platform_for "$target")
+  pointer_key="${prefix}/latest/${platform}.json"
+  if etag=$(aws s3api get-object --bucket "$bucket" --key "$pointer_key" \
+    --query ETag --output text "$work/${platform}.current" 2>"$work/get.err"); then
+    current=$(jq -r .version "$work/${platform}.current")
+    case "$(chrono compare "$pkg_version" "$current")" in
+      1) echo "$etag" >"$work/${platform}.etag" ;;
+      0) echo "${platform}: latest is already ${current}"; continue ;;
+      *)
+        echo "${pkg_name} ${pkg_version} is older than latest ${current} for ${platform}" >&2
+        exit 1
+        ;;
+    esac
+  elif grep -q NoSuchKey "$work/get.err"; then
+    echo null >"$work/${platform}.current"
+  else
+    cat "$work/get.err" >&2
+    exit 1
+  fi
+  platforms+=("$platform")
+done
+
+if [ ${#platforms[@]} -eq 0 ]; then
+  echo "${pkg_name} ${pkg_version} is already published for every platform"
+  exit 0
+fi
+
+# Published versions are immutable: --if-none-match fails if the key exists.
+put() {
+  aws s3api put-object --bucket "$bucket" --key "$1" --body "$2" \
+    --if-none-match '*' --checksum-algorithm SHA256 \
+    --metadata "git-revision=${revision}" --output text --query ETag >/dev/null
+}
+
+# Artifacts already uploaded for this version (e.g. a publish that failed
+# before moving a pointer) are reused as-is rather than rebuilt.
+built=false
+for platform in "${platforms[@]}"; do
+  name="${pkg_name}-${pkg_version}-${platform}.tar.gz"
+  key="${prefix}/${name}"
+  if aws s3api head-object --bucket "$bucket" --key "$key" >"$work/head.json" 2>/dev/null; then
+    echo "${key} already uploaded; pointing latest at it"
+    sha256=$(aws s3 cp "s3://${bucket}/${key}.sha256" - | cut -d' ' -f1)
+    size=$(jq .ContentLength "$work/head.json")
+    rev=$(jq -r '.Metadata["git-revision"] // "unknown"' "$work/head.json")
+  else
+    if [ "$built" = false ]; then
+      mise run release
+      built=true
+    fi
+    tarball=$(tarball_for "$platform")
+    sha256=$(shasum -a 256 "$tarball" | cut -d' ' -f1)
+    size=$(wc -c <"$tarball" | tr -d ' ')
+    printf '%s  %s\n' "$sha256" "$name" >"${tarball}.sha256"
+    put "$key" "$tarball"
+    put "${key}.sha256" "${tarball}.sha256"
+    rev="$revision"
+  fi
+
+  jq -n \
+    --arg version "$pkg_version" \
+    --arg platform "$platform" \
+    --arg key "$key" \
+    --arg sha256 "$sha256" \
+    --argjson size "$size" \
+    --arg revision "$rev" \
+    --arg published_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{version: $version, platform: $platform, key: $key, sha256: $sha256,
+      size: $size, revision: $revision, published_at: $published_at}' \
+    >"$work/${platform}.json"
+done
+
+# Pointers are written last, so they only ever name a complete upload.
+for platform in "${platforms[@]}"; do
+  pointer_key="${prefix}/latest/${platform}.json"
+  if [ -f "$work/${platform}.etag" ]; then
+    condition=(--if-match "$(cat "$work/${platform}.etag")")
+  else
+    condition=(--if-none-match '*')
+  fi
+  if ! aws s3api put-object --bucket "$bucket" --key "$pointer_key" --body "$work/${platform}.json" \
+    "${condition[@]}" --checksum-algorithm SHA256 \
+    --content-type application/json --cache-control no-cache \
+    --output text --query ETag >/dev/null; then
+    echo "artifacts are uploaded but ${pointer_key} was not updated" \
+      "(if the error is PreconditionFailed, another publish moved it; re-run)" >&2
+    exit 1
+  fi
+  echo "latest:    s3://${bucket}/${pointer_key} ($(jq -r '.version // "(none)"' "$work/${platform}.current") -> ${pkg_version})"
+done
+
+echo
+echo "published: s3://${bucket}/${prefix}/${pkg_name}-${pkg_version}-*.tar.gz"
+echo "revision:  ${revision}"
+echo "identity:  ${identity}"
