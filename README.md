@@ -95,6 +95,11 @@ Or through mise once the repository is pushed:
 
 ## Development
 
+Run `mise install` with mise 2026.9.2 or newer. The pinned
+[Mr. Boxington](https://mr-boxington.jdx.dev) caches compiler work across
+projects and worktrees through mise's native Cargo integration. Use the tasks
+below or `mise exec -- cargo build` to enable caching.
+
 ```sh
 mise run check   # cargo check
 mise run test    # cargo test
